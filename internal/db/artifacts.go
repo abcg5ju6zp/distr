@@ -30,7 +30,8 @@ var (
 )
 
 func artifactOutputExprWith(upstreamCredential func(EncryptedColumn, string) string) string {
-	return ` a.id, a.created_at, a.organization_id, a.name, a.image_id, a.public, ` +
+	return ` a.id, a.created_at, a.organization_id, a.name, a.image_id, a.title_image_id, a.public, ` +
+		`a.hidden_in_customer_overview, ` +
 		`a.upstream_url, a.last_synced_at, a.last_sync_error, a.upstream_auth_type, ` +
 		upstreamCredential(artifactUpstreamUsername, "a") + `, ` +
 		upstreamCredential(artifactUpstreamPassword, "a") + ` `
@@ -86,6 +87,13 @@ const (
 // place that tells the two apart.
 func artifactVersionIsTagExpr(alias string) string {
 	return alias + ".name <> " + alias + ".manifest_blob_digest"
+}
+
+// artifactVersionIsReleaseTagExpr matches tags except the ones clients push for signatures and attestations,
+// the OCI referrers fallback tag "sha256-<digest>" and the cosign tags "sha256-<digest>.sig", ".att" and
+// ".sbom", so that these are not mistaken for releases.
+func artifactVersionIsReleaseTagExpr(alias string) string {
+	return artifactVersionIsTagExpr(alias) + " AND " + alias + `.name !~ '^sha256-[0-9a-f]{64}(\.[a-z]+)?$'`
 }
 
 func artifactVersionIsDigestExpr(alias string) string {
@@ -556,6 +564,22 @@ func UpdateArtifactPublic(ctx context.Context, artifactID, organizationID uuid.U
 	return nil
 }
 
+func UpdateArtifactHiddenInCustomerOverview(
+	ctx context.Context,
+	artifactID, organizationID uuid.UUID,
+	hidden bool,
+) error {
+	db := internalctx.GetDb(ctx)
+	_, err := db.Exec(ctx,
+		`UPDATE Artifact SET hidden_in_customer_overview = @hidden WHERE id = @id AND organization_id = @organizationId`,
+		pgx.NamedArgs{"id": artifactID, "organizationId": organizationID, "hidden": hidden},
+	)
+	if err != nil {
+		return fmt.Errorf("could not update artifact overview visibility: %w", err)
+	}
+	return nil
+}
+
 func GetArtifactsWithUpstreamURL(ctx context.Context) ([]types.Artifact, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx, `SELECT`+artifactOutputExpr+`FROM Artifact a WHERE a.upstream_url IS NOT NULL`)
@@ -813,7 +837,7 @@ func GetNewestArtifactTag(
 		`SELECT`+artifactVersionOutputExpr+`
 		FROM ArtifactVersion v
 		WHERE v.artifact_id = @artifactId
-			AND `+artifactVersionIsTagExpr("v")+`
+			AND `+artifactVersionIsReleaseTagExpr("v")+`
 			AND (@allVersions OR v.manifest_blob_digest IN (
 				SELECT manifest_blob_digest FROM ArtifactVersion WHERE id = any(@artifactVersionIds)
 			))
@@ -946,6 +970,27 @@ func BulkUpsertArtifactVersionParts(ctx context.Context, parts []types.ArtifactV
 		return fmt.Errorf("could not bulk upsert ArtifactVersionParts: %w", err)
 	}
 	return nil
+}
+
+func HasUserPulledArtifact(ctx context.Context, userID, orgID uuid.UUID) (bool, error) {
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM ArtifactVersionPull avpl
+				JOIN ArtifactVersion av ON av.id = avpl.artifact_version_id
+				JOIN Artifact a ON a.id = av.artifact_id
+			WHERE avpl.useraccount_id = @userId AND a.organization_id = @orgId
+		)`,
+		pgx.NamedArgs{"userId": userID, "orgId": orgID},
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to query artifact pulls of user: %w", err)
+	}
+	result, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[bool])
+	if err != nil {
+		return false, fmt.Errorf("failed to collect artifact pulls of user: %w", err)
+	}
+	return result, nil
 }
 
 func CreateArtifactPullLogEntry(
@@ -1262,6 +1307,18 @@ func UpdateArtifactImage(ctx context.Context, artifact *types.ArtifactWithTagged
 	)
 	if err := row.Scan(&artifact.ImageID); err != nil {
 		return fmt.Errorf("could not save image id to artifact: %w", err)
+	}
+	return nil
+}
+
+func UpdateArtifactTitleImage(ctx context.Context, artifact *types.ArtifactWithTaggedVersion, imageID uuid.UUID) error {
+	db := internalctx.GetDb(ctx)
+	row := db.QueryRow(ctx,
+		`UPDATE Artifact SET title_image_id = @imageId WHERE id = @id RETURNING title_image_id`,
+		pgx.NamedArgs{"imageId": imageID, "id": artifact.ID},
+	)
+	if err := row.Scan(&artifact.TitleImageID); err != nil {
+		return fmt.Errorf("could not save title image id to artifact: %w", err)
 	}
 	return nil
 }

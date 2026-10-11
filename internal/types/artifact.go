@@ -24,18 +24,20 @@ const (
 )
 
 type Artifact struct {
-	ID               uuid.UUID         `db:"id" json:"id"`
-	CreatedAt        time.Time         `db:"created_at" json:"createdAt"`
-	OrganizationID   uuid.UUID         `db:"organization_id" json:"-"`
-	Name             string            `db:"name" json:"name"`
-	ImageID          *uuid.UUID        `db:"image_id" json:"-"`
-	Public           bool              `db:"public" json:"public"`
-	UpstreamURL      *string           `db:"upstream_url" json:"upstreamUrl,omitempty"`
-	LastSyncedAt     *time.Time        `db:"last_synced_at" json:"lastSyncedAt,omitempty"`
-	LastSyncError    *string           `db:"last_sync_error" json:"lastSyncError,omitempty"`
-	UpstreamAuthType *UpstreamAuthType `db:"upstream_auth_type" json:"upstreamAuthType,omitempty"`
-	UpstreamUsername *dbcrypto.String  `db:"upstream_username" json:"-"`
-	UpstreamPassword *dbcrypto.String  `db:"upstream_password" json:"-"`
+	ID                       uuid.UUID         `db:"id" json:"id"`
+	CreatedAt                time.Time         `db:"created_at" json:"createdAt"`
+	OrganizationID           uuid.UUID         `db:"organization_id" json:"-"`
+	Name                     string            `db:"name" json:"name"`
+	ImageID                  *uuid.UUID        `db:"image_id" json:"-"`
+	TitleImageID             *uuid.UUID        `db:"title_image_id" json:"-"`
+	Public                   bool              `db:"public" json:"public"`
+	HiddenInCustomerOverview bool              `db:"hidden_in_customer_overview" json:"hiddenInCustomerOverview"`
+	UpstreamURL              *string           `db:"upstream_url" json:"upstreamUrl,omitempty"`
+	LastSyncedAt             *time.Time        `db:"last_synced_at" json:"lastSyncedAt,omitempty"`
+	LastSyncError            *string           `db:"last_sync_error" json:"lastSyncError,omitempty"`
+	UpstreamAuthType         *UpstreamAuthType `db:"upstream_auth_type" json:"upstreamAuthType,omitempty"`
+	UpstreamUsername         *dbcrypto.String  `db:"upstream_username" json:"-"`
+	UpstreamPassword         *dbcrypto.String  `db:"upstream_password" json:"-"`
 }
 
 type DownloadMetrics struct {

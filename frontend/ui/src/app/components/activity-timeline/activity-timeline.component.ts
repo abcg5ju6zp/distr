@@ -15,8 +15,11 @@ export interface ActivityTimelineEntry {
   /** Omitted for entries recorded without a user, e.g. automated events. */
   userName?: string;
   userImageUrl?: string;
+  userImageIsLogo?: boolean;
   /** What the user did, phrased to follow the name, e.g. "commented". */
   action: string;
+  /** Represents the action. The action then leads the entry and the user follows below it. */
+  icon?: IconDefinition;
   body?: string;
 }
 
@@ -31,6 +34,8 @@ export interface ActivityTimelineEntry {
 })
 export class ActivityTimelineComponent {
   public readonly entries = input.required<ActivityTimelineEntry[]>();
+  /** "card" matches the bordered cards of the dashboards. */
+  public readonly variant = input<'panel' | 'card'>('panel');
   public readonly heading = input('Timeline');
   public readonly icon = input<IconDefinition>();
   public readonly emptyText = input('Nothing here yet.');

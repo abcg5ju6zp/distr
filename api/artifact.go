@@ -25,16 +25,24 @@ type PatchArtifactRequest struct {
 	UpstreamURL *string                        `json:"upstreamUrl,omitempty"`
 	Auth        Nullable[ArtifactUpstreamAuth] `json:"auth"`
 	Public      *bool                          `json:"public,omitempty"`
+	// HiddenInCustomerOverview leaves the artifact out of the artifact list on a customer's overview page.
+	HiddenInCustomerOverview *bool `json:"hiddenInCustomerOverview,omitempty"`
 }
 
 type ArtifactResponse struct {
 	types.ArtifactWithTaggedVersion
-	ImageUrl *string `json:"imageUrl,omitempty"`
+	ImageUrl      *string `json:"imageUrl,omitempty"`
+	TitleImageUrl *string `json:"titleImageUrl,omitempty"`
+}
+
+type ArtifactPullStatusResponse struct {
+	HasPulled bool `json:"hasPulled"`
 }
 
 type ArtifactsResponse struct {
 	types.ArtifactWithDownloads
-	ImageUrl *string `json:"imageUrl,omitempty"`
+	ImageUrl      *string `json:"imageUrl,omitempty"`
+	TitleImageUrl *string `json:"titleImageUrl,omitempty"`
 }
 
 type ArtifactVersionPullResponse struct {

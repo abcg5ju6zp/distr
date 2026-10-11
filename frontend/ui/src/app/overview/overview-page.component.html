@@ -1,0 +1,52 @@
+<app-page>
+  <div class="flex flex-col gap-6">
+    @if (instructions(); as instructions) {
+      @if (!instructionsHidden()) {
+        <app-overview-instructions [description]="instructions" (dismissed)="setInstructionsHidden(true)" />
+      }
+    }
+
+    @if (primarySection(); as primarySection) {
+      @if (deploymentTargets(); as deploymentTargets) {
+        @if (artifacts(); as artifacts) {
+          <app-overview-deployments
+            [section]="primarySection"
+            [deploymentTargets]="deploymentTargets"
+            [artifacts]="artifacts"
+            [instructionsHidden]="instructionsRestorable()"
+            (deploymentCreated)="reloadDeploymentTargets()"
+            (showInstructions)="setInstructionsHidden(false)" />
+        }
+      }
+    }
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+      @if (checklist(); as checklist) {
+        @if (checklistSection(); as checklistSection) {
+          @if (!checklistCompleted()) {
+            <app-overview-checklist [checklist]="checklist" [section]="checklistSection" [canInvite]="isAdmin" />
+          }
+        }
+      }
+      @if (license(); as license) {
+        <app-overview-license [license]="license" />
+      }
+      @if (alerts(); as alerts) {
+        <app-overview-alerts [alerts]="alerts" [canConfigure]="canWrite" />
+      }
+      @if (accessTokens().length > 0) {
+        <app-overview-access-tokens [accessTokens]="accessTokens()" />
+      }
+      @if (supportBundles(); as supportBundles) {
+        <app-overview-support-bundles
+          [supportBundles]="supportBundles"
+          [canCreate]="canWrite"
+          (created)="reloadSupportBundles()" />
+      }
+    </div>
+
+    @if (activity(); as activity) {
+      <app-overview-activity [activity]="activity" [vendorName]="vendorName()" [vendorLogo]="vendorLogo()" />
+    }
+  </div>
+</app-page>

@@ -62,6 +62,14 @@ Whether deployments of this application may have automatic updates enabled.
 
 ---
 
+### titleImageUrl?
+
+> `optional` **titleImageUrl?**: `string`
+
+The landscape image shown for this application on a customer's overview page.
+
+---
+
 ### type
 
 > **type**: [`DeploymentType`](../type-aliases/DeploymentType.md)
