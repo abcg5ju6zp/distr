@@ -39,7 +39,7 @@ func watchDeploymentMetrics(ctx context.Context) {
 }
 
 func reportDeploymentMetrics(ctx context.Context) {
-	deployments, err := GetExistingDeployments()
+	deployments, _, err := GetExistingDeployments()
 	if err != nil {
 		logger.Error("failed to get existing deployments for deployment metrics", zap.Error(err))
 		return

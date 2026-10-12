@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,23 +32,20 @@ func watchStatus(ctx context.Context) {
 	}
 }
 
-// statusReportMu is held by a status report from reading the deployment state until the report is sent, and by
-// an apply while it saves the progressing state. An apply therefore cannot start replacing containers while a
-// report that saw no pending update is still checking them.
-var statusReportMu sync.Mutex
-
 // targetRevisionIDs maps every deployment in the last resource to its target revision. The main loop replaces
 // the whole map and never modifies a published one.
 var targetRevisionIDs atomic.Pointer[map[uuid.UUID]uuid.UUID]
 
 func reportStatus(ctx context.Context) {
-	statusReportMu.Lock()
-	defer statusReportMu.Unlock()
-
-	deployments, err := GetExistingDeployments()
+	deployments, corruptions, err := GetExistingDeployments()
 	if err != nil {
 		logger.Error("could not get existing deployments for status check", zap.Error(err))
 		return
+	}
+	if len(corruptions) > 0 {
+		// The main loop quarantines and reports these; status checks ignore them here.
+		logger.Debug("skipped corrupt deployment state files during status check",
+			zap.Int("count", len(corruptions)))
 	}
 
 	targets := targetRevisionIDs.Load()

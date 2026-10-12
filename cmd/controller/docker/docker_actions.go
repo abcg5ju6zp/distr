@@ -11,6 +11,7 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/dotenv"
 	"github.com/distr-sh/distr/api"
+	"github.com/distr-sh/distr/internal/controllerapply"
 	"github.com/distr-sh/distr/internal/controllerauth"
 	"github.com/distr-sh/distr/internal/controllerenv"
 	"github.com/distr-sh/distr/internal/types"
@@ -18,137 +19,166 @@ import (
 	composeapi "github.com/docker/compose/v5/pkg/api"
 	"github.com/docker/compose/v5/pkg/compose"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 )
 
 const dockerApplyTimeout = 10 * time.Minute
 
-func DockerEngineApply(
+// ApplyGeneration claims no generation itself (the caller does under the deployment lock) but drives one
+// generation to an engine result and records the receipt. An ambiguous engine result is reconciled
+// against the resources that actually exist, so the same generation is never applied a second time.
+func ApplyGeneration(
 	ctx context.Context,
+	generation *controllerapply.Generation,
 	deployment api.ControllerDeployment,
 	previous *ControllerDeployment,
 	updateStatus func(string),
-) (controllerDeployment *ControllerDeployment, status string, err error) {
-	logger := logger.With(zap.Stringer("deploymentId", deployment.ID))
-	controllerDeployment, err = NewControllerDeployment(deployment, previous)
+) (*ControllerDeployment, *controllerapply.Receipt, string, error) {
+	controllerDeployment, err := NewControllerDeployment(deployment, previous, generation.ID)
 	if err != nil {
-		return controllerDeployment, status, err
+		return nil, nil, "", err
 	}
-
 	controllerDeployment.State = StateProgressing
-	statusReportMu.Lock()
-	err = SaveDeployment(*controllerDeployment)
-	statusReportMu.Unlock()
-	if err != nil {
-		logger.Warn("failed to save deployment before apply", zap.Error(err))
+	if err := deploymentStore.PublishState(*controllerDeployment); err != nil {
+		logger.Warn("failed to save deployment before apply",
+			zap.Stringer("deploymentId", controllerDeployment.ID), zap.Error(err))
 	}
 
 	applyCtx, cancel := context.WithTimeout(ctx, dockerApplyTimeout)
 	defer cancel()
 
+	var receipt *controllerapply.Receipt
+	var status string
 	if *deployment.DockerType == types.DockerTypeSwarm {
 		logger.Debug("applying compose file in swarm mode")
-		status, err = ApplyComposeFileSwarm(applyCtx, deployment, updateStatus)
+		receipt, status, err = applySwarmGeneration(applyCtx, deployment, updateStatus)
 	} else {
 		logger.Debug("applying compose file")
-		err = ApplyComposeFile(applyCtx, deployment, updateStatus)
-		if err == nil {
-			status = "compose command executed successfully"
-		}
+		receipt, status, err = applyComposeGeneration(applyCtx, deployment, updateStatus)
 	}
-
-	return controllerDeployment, status, err
+	return controllerDeployment, receipt, status, err
 }
 
-// SaveAppliedDeployment saves the outcome of [DockerEngineApply], which leaves the deployment progressing.
-func SaveAppliedDeployment(controllerDeployment *ControllerDeployment, applyErr error) {
-	if applyErr == nil {
-		controllerDeployment.State = StateReady
-		controllerDeployment.CurrentRevisionID = controllerDeployment.RevisionID
-	} else {
-		controllerDeployment.State = StateFailed
-	}
-
-	if err := SaveDeployment(*controllerDeployment); err != nil {
-		logger.Warn("failed to save deployment after apply",
-			zap.Stringer("deploymentId", controllerDeployment.ID), zap.Error(err))
-	}
-}
-
-func ApplyComposeFile(ctx context.Context, deployment api.ControllerDeployment, updateStatus func(string)) error {
-	updateStatus("initializing compose service")
-
-	workDir, err := WriteComposeProjectDir(deployment)
-	if err != nil {
-		return err
-	}
-
-	eventProcessor := NewEventProcessor(updateStatus)
-	composeService, err := ComposeServiceForDeployment(deployment, compose.WithEventProcessor(eventProcessor))
-	if err != nil {
-		return fmt.Errorf("failed to initialize compose service: %w", err)
-	}
-
-	project, err := composeService.LoadProject(ctx, ComposeLoadOptions(workDir))
-	if err != nil {
-		return fmt.Errorf("failed to load compose project: %w", err)
-	}
-
-	err = composeService.Up(ctx, project, composeapi.UpOptions{
-		Create: composeapi.CreateOptions{RemoveOrphans: true},
-		Start:  composeapi.StartOptions{Project: project},
-	})
-	if err != nil {
-		return fmt.Errorf("compose up failed: %w", err)
-	}
-
-	return nil
-}
-
-func ApplyComposeFileSwarm(
+// applyComposeGeneration publishes the project, skips the action when the revision is already fully
+// present and otherwise converges it with "compose up", recording container identities in the receipt.
+func applyComposeGeneration(
 	ctx context.Context,
 	deployment api.ControllerDeployment,
 	updateStatus func(string),
-) (string, error) {
+) (*controllerapply.Receipt, string, error) {
+	updateStatus("initializing compose service")
+
+	workDir, err := PublishComposeProject(ctx, deployment)
+	if err != nil {
+		return nil, "", err
+	}
+
+	eventProcessor := NewEventProcessor(updateStatus)
+	svc, err := ComposeServiceForDeployment(deployment, compose.WithEventProcessor(eventProcessor))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to initialize compose service: %w", err)
+	}
+
+	project, err := svc.LoadProject(ctx, ComposeLoadOptions(workDir))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to load compose project: %w", err)
+	}
+
+	receipt := &controllerapply.Receipt{Action: controllerapply.ActionComposeUp, StartedAt: receiptNow()}
+	if summaries := inspectComposeResources(ctx, project.Name); composeResourcesMatch(summaries, project) {
+		updateStatus("resources already present")
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+		receipt.Resources = composeResourceIdentities(summaries)
+		receipt.FinishedAt = receiptNow()
+		status := "compose resources already present, apply not repeated"
+		receipt.Message = status
+		return receipt, status, nil
+	}
+
+	err = svc.Up(ctx, project, composeapi.UpOptions{
+		Create: composeapi.CreateOptions{RemoveOrphans: true},
+		Start:  composeapi.StartOptions{Project: project},
+	})
+	summaries := inspectComposeResources(ctx, project.Name)
+	receipt.Resources = composeResourceIdentities(summaries)
+	receipt.FinishedAt = receiptNow()
+
+	if err == nil {
+		status := "compose command executed successfully"
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+		receipt.Message = status
+		return receipt, status, nil
+	}
+
+	if isAmbiguousEngineError(err) && composeResourcesMatch(summaries, project) {
+		status := "compose action result was uncertain, existing resources confirmed the deployment"
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+		receipt.Message = status
+		logger.Warn("compose action result was uncertain but resources match the target revision",
+			zap.Stringer("deploymentId", deployment.ID), zap.Error(err))
+		return receipt, status, nil
+	}
+
+	if isAmbiguousEngineError(err) {
+		receipt.Outcome = controllerapply.OutcomeUnknown
+		receipt.Message = err.Error()
+		return receipt, "", fmt.Errorf("%w: compose up: %v", errOutcomeUnknown, err)
+	}
+
+	receipt.Outcome = controllerapply.OutcomeFailed
+	receipt.Message = err.Error()
+	return receipt, "", fmt.Errorf("compose up failed: %w", err)
+}
+
+func applySwarmGeneration(
+	ctx context.Context,
+	deployment api.ControllerDeployment,
+	updateStatus func(string),
+) (*controllerapply.Receipt, string, error) {
 	// Step 1 Ensure Docker Swarm is initialized
 	initCmd := exec.CommandContext(ctx, "docker", "info", "--format", "{{.Swarm.LocalNodeState}}")
 	initOutput, err := initCmd.CombinedOutput()
 	if err != nil {
-		logger.Error("Failed to check Docker Swarm state", zap.Error(err))
-		return "", fmt.Errorf("failed to check Docker Swarm state: %w", err)
+		return nil, "", fmt.Errorf("failed to check Docker Swarm state: %w", err)
 	}
-
 	if !strings.Contains(strings.TrimSpace(string(initOutput)), "active") {
-		logger.Error("Docker Swarm not initialized", zap.String("output", string(initOutput)))
-		return "", fmt.Errorf("docker Swarm not initialized: %s", string(initOutput))
+		return nil, "", fmt.Errorf("docker Swarm not initialized: %s", string(initOutput))
 	}
 
 	projectName, err := getProjectName(deployment.ComposeFile)
 	if err != nil {
-		return "", fmt.Errorf("failed to get project name from compose file: %w", err)
+		return nil, "", fmt.Errorf("failed to get project name from compose file: %w", err)
 	}
 
 	cleanedComposeFile, err := cleanComposeFile(deployment.ComposeFile)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
+	expectedServices := swarmExpectedServices(cleanedComposeFile)
 
-	workDir, err := WriteComposeProjectDir(
-		api.ControllerDeployment{ID: deployment.ID, ComposeFile: cleanedComposeFile, EnvFile: deployment.EnvFile},
-	)
+	workDir, err := PublishSwarmProject(deployment, cleanedComposeFile, deployment.EnvFile)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 
-	// Construct environment variables
+	receipt := &controllerapply.Receipt{Action: controllerapply.ActionSwarmDeploy, StartedAt: receiptNow()}
+
+	existingServices, inspectErr := inspectSwarmResources(ctx, projectName)
+	if inspectErr == nil && swarmResourcesMatch(existingServices, projectName, expectedServices) {
+		updateStatus("services already present")
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+		receipt.Resources = swarmResourceIdentities(existingServices)
+		receipt.FinishedAt = receiptNow()
+		status := "swarm services already present, deploy not repeated"
+		receipt.Message = status
+		return receipt, status, nil
+	}
+
 	envVars := os.Environ()
 	envVars = append(envVars, DockerConfigEnv(deployment)...)
-
-	// If an env file is provided, load its values so that variable interpolation in the compose file works.
 	if deployment.EnvFile != nil {
 		parsedEnv, err := dotenv.UnmarshalBytesWithLookup(deployment.EnvFile, nil)
 		if err != nil {
-			return "", fmt.Errorf("failed to parse env file: %w", err)
+			return nil, "", fmt.Errorf("failed to parse env file: %w", err)
 		}
 		for key, value := range parsedEnv {
 			envVars = append(envVars, fmt.Sprintf("%s=%s", key, value))
@@ -156,8 +186,6 @@ func ApplyComposeFileSwarm(
 	}
 
 	updateStatus("applying compose project")
-
-	// Deploy the stack
 	composeArgs := []string{
 		"stack", "deploy",
 		"--compose-file", workDir.ComposeFile,
@@ -167,20 +195,80 @@ func ApplyComposeFileSwarm(
 	}
 	cmd := exec.CommandContext(ctx, "docker", composeArgs...)
 	cmd.Dir = workDir.Path
-	cmd.Env = envVars // Ensure the same env variables are used
+	cmd.Env = envVars
 
-	// Execute the command and capture output
-	cmdOut, err := cmd.CombinedOutput()
-	statusStr := string(cmdOut)
+	cmdOut, cmdErr := cmd.CombinedOutput()
+	services, _ := inspectSwarmResources(ctx, projectName)
+	receipt.Resources = swarmResourceIdentities(services)
+	receipt.FinishedAt = receiptNow()
 
-	if err != nil {
-		logger.Error("docker stack deploy failed", zap.String("output", statusStr))
-		return "", errors.New(statusStr)
-	} else {
-		logger.Debug("docker stack deploy returned", zap.String("output", statusStr), zap.Error(err))
+	if cmdErr == nil {
+		status := string(cmdOut)
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+		receipt.Message = status
+		logger.Debug("docker stack deploy returned", zap.String("output", status))
+		return receipt, status, nil
 	}
 
-	return statusStr, nil
+	logger.Error("docker stack deploy failed", zap.String("output", string(cmdOut)))
+	if isAmbiguousEngineError(cmdErr) && swarmResourcesMatch(services, projectName, expectedServices) {
+		status := "swarm deploy result was uncertain, existing services confirmed the deployment"
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+		receipt.Message = status
+		logger.Warn("swarm deploy result was uncertain but services match the target revision",
+			zap.Stringer("deploymentId", deployment.ID), zap.Error(cmdErr))
+		return receipt, status, nil
+	}
+
+	if isAmbiguousEngineError(cmdErr) {
+		receipt.Outcome = controllerapply.OutcomeUnknown
+		receipt.Message = string(cmdOut)
+		if receipt.Message == "" {
+			receipt.Message = cmdErr.Error()
+		}
+		return receipt, "", fmt.Errorf("%w: docker stack deploy: %v", errOutcomeUnknown, cmdErr)
+	}
+
+	receipt.Outcome = controllerapply.OutcomeFailed
+	receipt.Message = string(cmdOut)
+	return receipt, "", errors.New(string(cmdOut))
+}
+
+// restartWithReceipt runs a forced restart and records the action and its resources in the generation so
+// a restarted process does not force it a second time. A failed restart is still reported by the caller
+// but never fails a successful apply.
+func restartWithReceipt(ctx context.Context, deployment ControllerDeployment) (controllerapply.Receipt, error) {
+	receipt := controllerapply.Receipt{StartedAt: receiptNow()}
+	if deployment.DockerType == types.DockerTypeSwarm {
+		receipt.Action = controllerapply.ActionSwarmRestart
+	} else {
+		receipt.Action = controllerapply.ActionComposeRestart
+	}
+
+	err := RunDockerRestart(ctx, deployment)
+	receipt.FinishedAt = receiptNow()
+	switch {
+	case err == nil:
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+	case isAmbiguousEngineError(err):
+		receipt.Outcome = controllerapply.OutcomeUnknown
+	default:
+		receipt.Outcome = controllerapply.OutcomeFailed
+	}
+	receipt.Message = ""
+	if err != nil {
+		receipt.Message = err.Error()
+	}
+
+	switch deployment.DockerType {
+	case types.DockerTypeSwarm:
+		if services, inspectErr := inspectSwarmResources(ctx, deployment.ProjectName); inspectErr == nil {
+			receipt.Resources = swarmResourceIdentities(services)
+		}
+	default:
+		receipt.Resources = composeResourceIdentities(inspectComposeResources(ctx, deployment.ProjectName))
+	}
+	return receipt, err
 }
 
 func DockerEngineUninstall(ctx context.Context, deployment ControllerDeployment) error {
@@ -253,16 +341,8 @@ func DockerConfigEnv(deployment api.ControllerDeployment) []string {
 // hasRegistryImages parses the compose file in order to check whether one of the services uses an image hosted on
 // [controllerenv.DistrRegistryHost].
 func hasRegistryImages(deployment api.ControllerDeployment) bool {
-	var compose struct {
-		Services map[string]struct {
-			Image string
-		}
-	}
-	if err := yaml.Unmarshal(deployment.ComposeFile, &compose); err != nil {
-		return false
-	}
-	for _, svc := range compose.Services {
-		if strings.HasPrefix(svc.Image, controllerenv.DistrRegistryHost) {
+	for _, image := range specServiceImages(deployment.ComposeFile) {
+		if strings.HasPrefix(image, controllerenv.DistrRegistryHost) {
 			return true
 		}
 	}

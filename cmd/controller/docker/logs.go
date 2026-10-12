@@ -54,7 +54,7 @@ func (lw *logsWatcher) SetLogsAfter(v *time.Time) {
 func (lw *logsWatcher) collect(ctx context.Context) {
 	logger.Debug("getting logs")
 
-	deployments, err := GetExistingDeployments()
+	deployments, _, err := GetExistingDeployments()
 	if err != nil {
 		logger.Warn("watch logs could not get deployments", zap.Error(err))
 		return

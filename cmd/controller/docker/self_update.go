@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/distr-sh/distr/internal/controllerapply"
 	"github.com/moby/moby/api/types/container"
 	mobyClient "github.com/moby/moby/client"
 	"go.uber.org/zap"
@@ -100,15 +101,14 @@ func ApplyControllerComposeFile(ctx context.Context, manifest map[string]any) er
 	// It is therefore necessary to write the docker-compose.yaml data to a file instead.
 	// Because of how DinD works, this file, which is also mounted in the new container must be
 	// either on the host filesystem or in a shared volume.
-	file, err := os.Create(path.Join(ScratchDir(), "distr-update.yaml"))
+	updateFilePath := path.Join(ScratchDir(), "distr-update.yaml")
+	data, err := yaml.Marshal(manifest)
 	if err != nil {
 		return err
 	}
-	if err := yaml.NewEncoder(file).Encode(manifest); err != nil {
-		file.Close()
+	if err := controllerapply.WriteFileAtomic(updateFilePath, data, 0o600); err != nil {
 		return err
 	}
-	file.Close()
 
 	// The self-update container uses the same image as the new controller.
 	// This should save some time and disk space on the host, but it means that we have to be
@@ -118,6 +118,15 @@ func ApplyControllerComposeFile(ctx context.Context, manifest map[string]any) er
 		return err
 	}
 
+	receipt := controllerapply.Receipt{
+		Action:    controllerapply.ActionEngineRun,
+		StartedAt: receiptNow(),
+		Resources: []controllerapply.ResourceIdentity{{
+			Kind:  "container",
+			Name:  updateContainerName,
+			Image: imageName,
+		}},
+	}
 	cmd := exec.CommandContext(ctx,
 		"docker", "run", "--detach", "--rm",
 		"--name", updateContainerName,
@@ -126,11 +135,26 @@ func ApplyControllerComposeFile(ctx context.Context, manifest map[string]any) er
 		"--env", "DOCKER_HOST="+os.Getenv("DOCKER_HOST"),
 		"--volumes-from", containerID,
 		imageName,
-		"docker", "compose", "-f", file.Name(), "up", "-d",
+		"docker", "compose", "-f", updateFilePath, "up", "-d",
 	)
-	out, err := cmd.CombinedOutput()
-	logger.Sugar().Infof("self-update output: %v", strings.TrimSpace(string(out)))
-	return err
+	out, cmdErr := cmd.CombinedOutput()
+	receipt.FinishedAt = receiptNow()
+	receipt.Message = strings.TrimSpace(string(out))
+	logger.Sugar().Infof("self-update output: %v", receipt.Message)
+
+	if cmdErr == nil {
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+	} else if running, inspectErr := selfUpdateInProgress(ctx); inspectErr == nil && running {
+		// The detached container exists despite the ambiguous response, so the update was started.
+		receipt.Outcome = controllerapply.OutcomeSucceeded
+		cmdErr = nil
+	} else {
+		receipt.Outcome = controllerapply.OutcomeFailed
+	}
+	if err := deploymentStore.SaveSelfUpdateReceipt(receipt); err != nil {
+		logger.Warn("failed to persist self-update receipt", zap.Error(err))
+	}
+	return cmdErr
 }
 
 // selfUpdateInProgress reports whether the updater container is currently running. Non-running
