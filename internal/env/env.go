@@ -85,6 +85,8 @@ var (
 	cleanupFileMinAge                     time.Duration
 	deploymentStatusNotificationCron      *string
 	deploymentStatusNotificationTimeout   time.Duration
+	automaticUpdatesRetryCron             *string
+	automaticUpdatesRetryTimeout          time.Duration
 	notificationEmailHourlyQuota          int
 	oidcGithubEnabled                     bool
 	oidcGithubClientID                    *string
@@ -319,6 +321,9 @@ func Initialize() {
 		envparse.PositiveDuration, 24*time.Hour)
 	deploymentStatusNotificationCron = envutil.GetEnvOrNil("DEPLOYMENT_STATUS_NOTIFICATION_CRON")
 	deploymentStatusNotificationTimeout = envutil.GetEnvParsedOrDefault("DEPLOYMENT_STATUS_NOTIFICATION_TIMEOUT",
+		envparse.PositiveDuration, 0)
+	automaticUpdatesRetryCron = envutil.GetEnvOrNil("AUTOMATIC_UPDATE_RETRY_CRON")
+	automaticUpdatesRetryTimeout = envutil.GetEnvParsedOrDefault("AUTOMATIC_UPDATE_RETRY_TIMEOUT",
 		envparse.PositiveDuration, 0)
 	notificationEmailHourlyQuota = envutil.GetEnvParsedOrDefault("NOTIFICATION_EMAIL_HOURLY_QUOTA",
 		envparse.NonNegativeNumber, 120)
@@ -626,6 +631,14 @@ func DeploymentStatusNotificationCron() *string {
 
 func DeploymentStatusNotificationTimeout() time.Duration {
 	return deploymentStatusNotificationTimeout
+}
+
+func AutomaticUpdatesRetryCron() *string {
+	return automaticUpdatesRetryCron
+}
+
+func AutomaticUpdatesRetryTimeout() time.Duration {
+	return automaticUpdatesRetryTimeout
 }
 
 // NotificationEmailHourlyQuota is the maximum number of status/metrics notification

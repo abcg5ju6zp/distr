@@ -91,6 +91,8 @@ func (reg *Registry) createDBPoolFor(ctx context.Context, url string, maxConns *
 			"NOTIFICATION_RECORD_TYPE",
 			"VERSIONING_STRATEGY",
 			"_VERSIONING_STRATEGY",
+			"AUTOMATIC_UPDATE_BATCH_ITEM_STATUS",
+			"_AUTOMATIC_UPDATE_BATCH_ITEM_STATUS",
 		}
 		for _, typeName := range typeNames {
 			if pgType, err := conn.LoadType(ctx, typeName); err != nil {

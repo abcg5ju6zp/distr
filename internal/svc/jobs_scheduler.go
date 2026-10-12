@@ -3,6 +3,7 @@ package svc
 import (
 	"context"
 
+	"github.com/distr-sh/distr/internal/autoupdate"
 	"github.com/distr-sh/distr/internal/cleanup"
 	"github.com/distr-sh/distr/internal/customdomains"
 	"github.com/distr-sh/distr/internal/env"
@@ -106,6 +107,20 @@ func (r *Registry) createJobsScheduler() (*jobs.Scheduler, error) {
 				"CustomDomainVerification",
 				customdomains.RunCustomDomainVerification,
 				env.CustomDomainVerificationTimeout(),
+			),
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if cron := env.AutomaticUpdatesRetryCron(); cron != nil {
+		err = scheduler.RegisterCronJob(
+			*cron,
+			jobs.NewJob(
+				"AutomaticUpdateBatchRetry",
+				autoupdate.RunPendingBatches,
+				env.AutomaticUpdatesRetryTimeout(),
 			),
 		)
 		if err != nil {

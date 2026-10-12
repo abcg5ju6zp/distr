@@ -6,6 +6,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/distr-sh/distr/internal/autoupdate"
 	"github.com/distr-sh/distr/internal/buildconfig"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
@@ -87,6 +88,12 @@ func runServe(ctx context.Context, opts ServeOptions) {
 
 	if env.MetricsEnabled() {
 		util.Must(registry.GetPrometheusCollector().Initialize(dbCtx, db.QueryableInitDataSource{}))
+	}
+
+	// Continue automatic-update batches interrupted by the restart. Per-batch errors stay in the
+	// log and the retry cron picks them up, so this must not stop the server from starting.
+	if err := autoupdate.RunPendingBatches(dbLogCtx); err != nil {
+		registry.GetLogger().Warn("could not resume automatic update batches", zap.Error(err))
 	}
 
 	server := registry.GetServer()

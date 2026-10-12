@@ -360,6 +360,25 @@ func DeleteDeploymentWithID(ctx context.Context, id uuid.UUID) error {
 }
 
 func CreateDeploymentRevision(ctx context.Context, request *api.DeploymentRequest) (*types.DeploymentRevision, error) {
+	return createDeploymentRevision(ctx, request, nil)
+}
+
+// CreateAutomaticUpdateDeploymentRevision creates the single revision an automatic-update batch
+// item owns. The item id is the stable identity the revision can be looked up by when the insert
+// response was lost, which makes retries idempotent.
+func CreateAutomaticUpdateDeploymentRevision(
+	ctx context.Context,
+	request *api.DeploymentRequest,
+	batchItemID uuid.UUID,
+) (*types.DeploymentRevision, error) {
+	return createDeploymentRevision(ctx, request, &batchItemID)
+}
+
+func createDeploymentRevision(
+	ctx context.Context,
+	request *api.DeploymentRequest,
+	automaticUpdateBatchItemID *uuid.UUID,
+) (*types.DeploymentRevision, error) {
 	deploymentID := dbcrypto.ScopeOf(request.DeploymentID)
 	valuesYamlEnc, err := deploymentValuesYaml.EncryptBytes(request.ValuesYaml, deploymentID)
 	if err != nil {
@@ -378,8 +397,9 @@ func CreateDeploymentRevision(ctx context.Context, request *api.DeploymentReques
 		"valuesHash":             request.ValuesHash,
 		"forceRestart":           request.ForceRestart,
 		"ignoreRevisionSkew":     request.IgnoreRevisionSkew,
-		"createdByUserAccountId": request.CreatedByUserAccountID,
-		"trigger":                request.Trigger,
+		"createdByUserAccountId":      request.CreatedByUserAccountID,
+		"trigger":                     request.Trigger,
+		"automaticUpdateBatchItemId":  automaticUpdateBatchItemID,
 	}
 
 	if request.HelmOptions != nil {
@@ -409,7 +429,8 @@ func CreateDeploymentRevision(ctx context.Context, request *api.DeploymentReques
 				helm_options_cleanup_on_failure,
 				helm_options_force_conflicts,
 				created_by_user_account_id,
-				trigger
+				trigger,
+				automatic_update_batch_item_id
 			) VALUES (
 				@deploymentId,
 				@applicationVersionId,
@@ -424,7 +445,8 @@ func CreateDeploymentRevision(ctx context.Context, request *api.DeploymentReques
 				@helmOptionsCleanupOnFailure,
 				@helmOptionsForceConflicts,
 				@createdByUserAccountId,
-				@trigger
+				@trigger,
+				@automaticUpdateBatchItemId
 			) RETURNING
 				dr.id,
 				dr.created_at,
