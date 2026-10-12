@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/distr-sh/distr/internal/customdomains"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/dbcrypto"
+	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
 	"github.com/distr-sh/distr/internal/security"
@@ -350,7 +352,25 @@ func createSupportBundleHandler() http.HandlerFunc {
 
 		baseURL := customdomains.AppDomainOrDefault(ctx, org.ID, org.Branding)
 
-		expiresAt := time.Now().UTC().Add(24 * time.Hour)
+		// The collection configuration is fixed once, at bundle creation: later vendor changes never
+		// reach this bundle's collection.
+		configuredEnvVars, err := db.GetSupportBundleConfigurationEnvVars(ctx, *a.CurrentOrgID())
+		if err != nil {
+			log.Error("failed to get support bundle config env vars", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		enabledScripts, err := db.GetEnabledSupportBundleConfigurationScripts(ctx, *a.CurrentOrgID())
+		if err != nil {
+			log.Error("failed to get support bundle config scripts", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		expiresAt := time.Now().UTC().Add(env.SupportBundleSecretTTL())
 		bundle := types.SupportBundle{
 			OrganizationID:         *a.CurrentOrgID(),
 			CustomerOrganizationID: *a.CurrentCustomerOrgID(),
@@ -360,7 +380,13 @@ func createSupportBundleHandler() http.HandlerFunc {
 			BundleSecret:           dbcrypto.String(bundleSecret),
 			BundleSecretExpiresAt:  &expiresAt,
 		}
-		if err := db.CreateSupportBundle(ctx, &bundle); err != nil {
+		if _, err := db.CreateSupportBundleWithCollection(ctx, &bundle, db.CreateSupportBundleCollectionParams{
+			EnvVars:               configuredEnvVars,
+			Scripts:               enabledScripts,
+			ResourceMaxBytes:      env.SupportBundleResourceMaxBytes(),
+			LogTailLines:          env.SupportBundleLogTailLines(),
+			ScriptTimeoutSeconds:  int(math.Ceil(env.SupportBundleScriptTimeout().Seconds())),
+		}); err != nil {
 			log.Error("failed to create support bundle", zap.Error(err))
 			sentry.GetHubFromContext(ctx).CaptureException(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -512,6 +538,11 @@ func writeSupportBundleZip(w io.Writer, resources []types.SupportBundleResource)
 
 	usedNames := make(map[string]struct{})
 	for _, resource := range resources {
+		// Pending/skipped/oversized outcomes carry no file; the ZIP only holds collected content.
+		// Failed resources may keep their partial output and are included.
+		if len(resource.Content) == 0 {
+			continue
+		}
 		name := supportBundleZipEntryName(resource.Name, resource.ID.String())
 		entryName := name + ".txt"
 		for count := 2; ; count++ {
@@ -611,6 +642,7 @@ func updateSupportBundleStatusHandler() http.HandlerFunc {
 				err = db.RunTxRR(ctx, func(ctx context.Context) error {
 					if err := db.UpdateSupportBundleStatus(
 						ctx, bundle.ID, bundle.OrganizationID, status, &changedBy,
+						types.SupportBundleStatusInitialized,
 					); err != nil {
 						return err
 					}
@@ -619,6 +651,7 @@ func updateSupportBundleStatusHandler() http.HandlerFunc {
 			} else {
 				err = db.UpdateSupportBundleStatus(
 					ctx, bundle.ID, bundle.OrganizationID, status, &changedBy,
+					types.SupportBundleStatusCreated,
 				)
 			}
 		case types.SupportBundleStatusCanceled:
@@ -634,6 +667,7 @@ func updateSupportBundleStatusHandler() http.HandlerFunc {
 			err = db.RunTxRR(ctx, func(ctx context.Context) error {
 				if err := db.UpdateSupportBundleStatus(
 					ctx, bundle.ID, bundle.OrganizationID, status, &changedBy,
+					types.SupportBundleStatusInitialized,
 				); err != nil {
 					return err
 				}
@@ -646,6 +680,8 @@ func updateSupportBundleStatusHandler() http.HandlerFunc {
 
 		if errors.Is(err, apierrors.ErrNotFound) {
 			http.NotFound(w, r)
+		} else if errors.Is(err, apierrors.ErrConflict) {
+			http.Error(w, err.Error(), http.StatusConflict)
 		} else if err != nil {
 			log.Error("failed to update support bundle status", zap.Error(err))
 			sentry.GetHubFromContext(ctx).CaptureException(err)

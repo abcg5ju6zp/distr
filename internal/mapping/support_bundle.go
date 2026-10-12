@@ -66,18 +66,35 @@ func SupportBundleToAPI(bundle types.SupportBundleWithDetails) api.SupportBundle
 
 func SupportBundleResourceToAPI(resource types.SupportBundleResource) api.SupportBundleResource {
 	return api.SupportBundleResource{
-		ID:        resource.ID,
-		CreatedAt: resource.CreatedAt,
-		Name:      resource.Name,
-		Content:   string(resource.Content),
+		ID:            resource.ID,
+		CreatedAt:     resource.CreatedAt,
+		StableKey:     resource.StableKey,
+		Name:          resource.Name,
+		Kind:          api.SupportBundleResourceKind(resource.Kind),
+		Required:      resource.Required,
+		Status:        api.SupportBundleResourceStatus(resource.Status),
+		SizeBytes:     resource.SizeBytes,
+		ContentSHA256: resource.ContentSHA256,
+		FailureReason: resource.FailureReason,
+		Content:       string(resource.Content),
 	}
 }
 
-func SupportBundleResourceToSummaryAPI(resource types.SupportBundleResource) api.SupportBundleResourceSummary {
-	return api.SupportBundleResourceSummary{
-		ID:        resource.ID,
-		CreatedAt: resource.CreatedAt,
-		Name:      resource.Name,
+func SupportBundleResourceReportToAPI(
+	resource types.SupportBundleResource, outcome string,
+) api.ReportSupportBundleResourceResponse {
+	return api.ReportSupportBundleResourceResponse{
+		ID:            resource.ID,
+		CreatedAt:     resource.CreatedAt,
+		StableKey:     resource.StableKey,
+		Name:          resource.Name,
+		Kind:          api.SupportBundleResourceKind(resource.Kind),
+		Required:      resource.Required,
+		Status:        api.SupportBundleResourceStatus(resource.Status),
+		Outcome:       outcome,
+		SizeBytes:     resource.SizeBytes,
+		ContentSHA256: resource.ContentSHA256,
+		FailureReason: resource.FailureReason,
 	}
 }
 

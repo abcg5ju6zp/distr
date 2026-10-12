@@ -183,6 +183,12 @@ distr:
     #   value: '720h'  # 30 days (default)
     # - name: CLEANUP_FILE_MIN_AGE
     #   value: '24h'
+    # - name: CLEANUP_SUPPORT_BUNDLE_MIN_AGE
+    #   value: '24h'
+    # - name: SUPPORT_BUNDLE_SECRET_TTL
+    #   value: '24h'
+    # - name: SUPPORT_BUNDLE_SECRET_RENEW_BEFORE
+    #   value: '1h'
     # OIDC providers, see https://distr.sh/docs/self-hosting/configuration/#oidc-authentication
     # - name: OIDC_GITHUB_ENABLED
     #   value: 'true'
@@ -450,6 +456,12 @@ cronJobs:
     labels:
       distr.sh/job: file-cleanup
     args: [cleanup, File, --timeout, 10m]
+  # Deletes only unpublished, unrecoverable support bundles (canceled, or initialized with an
+  # expired collection secret) older than CLEANUP_SUPPORT_BUNDLE_MIN_AGE; published bundles are kept.
+  - name: support-bundle-cleanup
+    labels:
+      distr.sh/job: support-bundle-cleanup
+    args: [cleanup, SupportBundle, --timeout, 10m]
   # - name: organization-cleanup
   #   labels:
   #     distr.sh/job: organization-cleanup

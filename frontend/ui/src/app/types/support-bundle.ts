@@ -53,10 +53,32 @@ export interface CreateSupportBundleResponse extends SupportBundle {
   collectCommand: string;
 }
 
+export type SupportBundleResourceStatus =
+  | 'pending'
+  | 'succeeded'
+  | 'skipped'
+  | 'oversized'
+  | 'failed';
+
+export type SupportBundleResourceKind =
+  | 'system_info'
+  | 'host_env'
+  | 'custom_script'
+  | 'container_env'
+  | 'container_logs'
+  | 'other';
+
 export interface SupportBundleResource {
   id: string;
   createdAt: string;
+  stableKey: string;
   name: string;
+  kind: SupportBundleResourceKind;
+  required: boolean;
+  status: SupportBundleResourceStatus;
+  sizeBytes: number;
+  contentSha256?: string;
+  failureReason?: string;
   content: string;
 }
 

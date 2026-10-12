@@ -26,8 +26,12 @@ import {AuthService} from '../../services/auth.service';
 import {OverlayService} from '../../services/overlay.service';
 import {SupportBundlesService, supportBundleZipFileName} from '../../services/support-bundles.service';
 import {ToastService} from '../../services/toast.service';
-import {SupportBundleDetail} from '../../types/support-bundle';
-import {supportBundleDeleteConfirm, supportBundleStatusBadgeClass} from '../support-bundle-display';
+import {SupportBundleDetail, SupportBundleResource} from '../../types/support-bundle';
+import {
+  supportBundleDeleteConfirm,
+  supportBundleResourceStatusBadgeClass,
+  supportBundleStatusBadgeClass,
+} from '../support-bundle-display';
 
 @Component({
   selector: 'app-support-bundle-detail',
@@ -52,6 +56,7 @@ export class SupportBundleDetailComponent {
   protected readonly faTrash = faTrash;
   protected readonly faXmark = faXmark;
   protected readonly statusBadgeClass = supportBundleStatusBadgeClass;
+  protected readonly resourceStatusBadgeClass = supportBundleResourceStatusBadgeClass;
 
   private readonly timeline = viewChild(ActivityTimelineComponent);
 
@@ -71,6 +76,12 @@ export class SupportBundleDetailComponent {
       action: 'commented',
       body: comment.content,
     }))
+  );
+
+  // Pending manifest items are placeholders for resources still being collected; only decided
+  // outcomes (succeeded/skipped/oversized/failed) are shown.
+  protected readonly decidedResources = computed<SupportBundleResource[]>(() =>
+    (this.bundle()?.resources ?? []).filter((resource) => resource.status !== 'pending')
   );
 
   private readonly refresh$ = new Subject<void>();

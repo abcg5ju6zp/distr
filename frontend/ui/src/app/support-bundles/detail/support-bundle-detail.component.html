@@ -89,8 +89,8 @@
 
     <div class="distr-panel mb-6">
       <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Resources ({{ bundle.resources.length }})</h2>
-        @if (bundle.resources.length > 0) {
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Resources ({{ decidedResources().length }})</h2>
+        @if (decidedResources().length > 0) {
           <button
             type="button"
             (click)="downloadResources()"
@@ -101,24 +101,41 @@
           </button>
         }
       </div>
-      @if (bundle.resources.length === 0) {
+      @if (decidedResources().length === 0) {
         <p class="text-sm text-gray-500 dark:text-gray-400">No resources collected yet.</p>
       } @else {
         <div class="space-y-3">
-          @for (resource of bundle.resources; track resource.id) {
+          @for (resource of decidedResources(); track resource.id) {
             <div class="border border-gray-200 dark:border-gray-700 rounded-lg">
-              <button
-                type="button"
-                (click)="toggleResource(resource.id)"
-                class="flex items-center justify-between w-full p-4 text-left text-sm font-medium text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700"
-                [class.rounded-lg]="!isResourceExpanded(resource.id)"
-                [class.rounded-t-lg]="isResourceExpanded(resource.id)">
-                <span>{{ resource.name }}</span>
-                <fa-icon
-                  [icon]="isResourceExpanded(resource.id) ? faChevronDown : faChevronRight"
-                  class="text-gray-500 dark:text-gray-400" />
-              </button>
-              @if (isResourceExpanded(resource.id)) {
+              <div
+                class="flex items-center justify-between gap-3 w-full p-4 text-left text-sm font-medium text-gray-900 dark:text-white"
+                [class.rounded-lg]="!isResourceExpanded(resource.id) || !resource.content"
+                [class.rounded-t-lg]="isResourceExpanded(resource.id) && !!resource.content">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="truncate">{{ resource.name }}</span>
+                  <span
+                    class="shrink-0 inline-block text-xs font-medium px-2 py-0.5 border rounded-full"
+                    [class]="resourceStatusBadgeClass(resource.status)">
+                    {{ resource.status }}
+                  </span>
+                  @if (resource.failureReason) {
+                    <span class="shrink-0 text-xs font-normal text-gray-500 dark:text-gray-400">
+                      {{ resource.failureReason }}
+                    </span>
+                  }
+                </div>
+                @if (resource.content) {
+                  <button
+                    type="button"
+                    (click)="toggleResource(resource.id)"
+                    class="shrink-0 hover:text-gray-700 dark:hover:text-gray-300">
+                    <fa-icon
+                      [icon]="isResourceExpanded(resource.id) ? faChevronDown : faChevronRight"
+                      class="text-gray-500 dark:text-gray-400" />
+                  </button>
+                }
+              </div>
+              @if (isResourceExpanded(resource.id) && resource.content) {
                 <div class="border-t border-gray-200 dark:border-gray-700 p-4">
                   <pre
                     class="text-xs text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap break-words"

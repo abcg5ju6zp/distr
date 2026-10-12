@@ -28,6 +28,7 @@ const (
 	organization            = "Organization"
 	userAccount             = "UserAccount"
 	file                    = "File"
+	supportBundle           = "SupportBundle"
 )
 
 type CleanupOptions struct {
@@ -40,13 +41,14 @@ func NewCleanupCommand() *cobra.Command {
 	cmd := cobra.Command{
 		Use: "cleanup <type> [type...]",
 		Long: fmt.Sprintf(
-			"type must be one of: %v, %v, %v, %v, %v, %v",
+			"type must be one of: %v, %v, %v, %v, %v, %v, %v",
 			deploymentTargetMetrics,
 			oidcState,
 			artifactBlob,
 			organization,
 			userAccount,
 			file,
+			supportBundle,
 		),
 		Short: "delete old data",
 		Args:  cobra.MinimumNArgs(1),
@@ -57,6 +59,7 @@ func NewCleanupCommand() *cobra.Command {
 			organization,
 			userAccount,
 			file,
+			supportBundle,
 		},
 		PreRun: func(cmd *cobra.Command, args []string) { env.Initialize() },
 		Run: func(cmd *cobra.Command, args []string) {
@@ -93,6 +96,8 @@ func resolveCleanupFunc(cleanupType string, registry *svc.Registry) (func(contex
 		return cleanup.RunUserAccountCleanup, nil
 	case file:
 		return cleanup.RunFileCleanup, nil
+	case supportBundle:
+		return cleanup.RunSupportBundleCleanup, nil
 	default:
 		return nil, fmt.Errorf("invalid cleanup type: %v", cleanupType)
 	}

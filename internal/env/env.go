@@ -114,6 +114,9 @@ var (
 	supportBundleLogTailLines             int
 	supportBundleResourceMaxBytes         int
 	supportBundleScriptTimeout            time.Duration
+	supportBundleSecretTTL                time.Duration
+	supportBundleSecretRenewBefore        time.Duration
+	cleanupSupportBundleMinAge            time.Duration
 	lokiURL                               string
 	lokiBearerToken                       *string
 	lokiBasicAuthUsername                 *string
@@ -374,6 +377,15 @@ func Initialize() {
 	)
 	supportBundleScriptTimeout = envutil.GetEnvParsedOrDefault(
 		"SUPPORT_BUNDLE_SCRIPT_TIMEOUT", envparse.PositiveDuration, time.Minute,
+	)
+	supportBundleSecretTTL = envutil.GetEnvParsedOrDefault(
+		"SUPPORT_BUNDLE_SECRET_TTL", envparse.PositiveDuration, 24*time.Hour,
+	)
+	supportBundleSecretRenewBefore = envutil.GetEnvParsedOrDefault(
+		"SUPPORT_BUNDLE_SECRET_RENEW_BEFORE", envparse.PositiveDuration, time.Hour,
+	)
+	cleanupSupportBundleMinAge = envutil.GetEnvParsedOrDefault(
+		"CLEANUP_SUPPORT_BUNDLE_MIN_AGE", envparse.PositiveDuration, 24*time.Hour,
 	)
 
 	lokiURL = envutil.RequireEnv("LOKI_URL")
@@ -789,6 +801,25 @@ func SupportBundleResourceMaxBytes() int {
 // before the collect script kills it. Rounded up to whole seconds when rendered.
 func SupportBundleScriptTimeout() time.Duration {
 	return supportBundleScriptTimeout
+}
+
+// SupportBundleSecretTTL is how long the collection secret of a new support bundle stays valid.
+// Activity while collecting slides the expiry forward by this TTL.
+func SupportBundleSecretTTL() time.Duration {
+	return supportBundleSecretTTL
+}
+
+// SupportBundleSecretRenewBefore is the remaining-validity window inside which any collecting
+// activity extends the collection secret, so a long-running collection near expiry keeps working on
+// the same bundle.
+func SupportBundleSecretRenewBefore() time.Duration {
+	return supportBundleSecretRenewBefore
+}
+
+// CleanupSupportBundleMinAge is how long canceled bundles, and initialized bundles whose collection
+// secret has expired, are kept before the support bundle cleanup deletes them as unrecoverable.
+func CleanupSupportBundleMinAge() time.Duration {
+	return cleanupSupportBundleMinAge
 }
 
 // LokiURL is the base URL of the Loki instance storing deployment and deployment

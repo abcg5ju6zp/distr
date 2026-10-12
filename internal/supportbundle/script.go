@@ -13,20 +13,25 @@ import (
 )
 
 type CollectScriptParams struct {
-	BaseURL          string
-	BundleID         uuid.UUID
-	BundleSecret     string
-	EnvVars          []types.SupportBundleConfigurationEnvVar
-	Scripts          []types.SupportBundleConfigurationScript
-	LogTailLines     int
-	ResourceMaxBytes int
-	ScriptTimeout    time.Duration
+	BaseURL      string
+	BundleID     uuid.UUID
+	BundleSecret string
+	// CollectionGeneration identifies the fixed collection generation the script belongs to. It is
+	// embedded for diagnostics; correctness comes from the server-side snapshot it was rendered from.
+	CollectionGeneration uuid.UUID
+	EnvVars              []types.SupportBundleCollectionEnvVar
+	Scripts              []types.SupportBundleCollectionScript
+	LogTailLines         int
+	ResourceMaxBytes     int
+	ScriptTimeout        time.Duration
 }
 
-// collectScriptCustomScript holds a custom script in the form the template needs. Every field is
-// base64-encoded so that no vendor-controlled content can terminate the heredoc the collect script
-// is written with, which would make the remainder of the rendered file run as the outer script.
+// collectScriptCustomScript holds a custom script in the form the template needs. Every field but
+// the id is base64-encoded so that no vendor-controlled content can terminate the heredoc the
+// collect script is written with, which would make the remainder of the rendered file run as the
+// outer script. The id is the stable resource identity the server manifest uses.
 type collectScriptCustomScript struct {
+	ID                string
 	NameBase64        string
 	DescriptionBase64 string
 	ContentBase64     string
@@ -43,6 +48,7 @@ func GenerateCollectScript(params CollectScriptParams) (string, error) {
 			description = *script.Description
 		}
 		scripts[i] = collectScriptCustomScript{
+			ID:                script.ID.String(),
 			NameBase64:        base64.StdEncoding.EncodeToString([]byte(script.Name)),
 			DescriptionBase64: base64.StdEncoding.EncodeToString([]byte(description)),
 			ContentBase64:     base64.StdEncoding.EncodeToString([]byte(script.Content)),
@@ -60,6 +66,7 @@ func GenerateCollectScript(params CollectScriptParams) (string, error) {
 		"BundleID":             params.BundleID.String(),
 		"BaseURL":              apiBase,
 		"Token":                params.BundleSecret,
+		"Generation":           params.CollectionGeneration.String(),
 		"EnvVars":              params.EnvVars,
 		"Scripts":              scripts,
 		"LogTail":              params.LogTailLines,
